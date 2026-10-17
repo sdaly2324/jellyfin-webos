@@ -140,4 +140,71 @@
             postMessage('hideMediaSession');
         }
     };
+
+    function lunaMedia(method, parameters, callback) {
+        var bridge = new PalmServiceBridge();
+        bridge.onservicecallback = function (response) {
+            if (callback) {
+                var cb = callback;
+                callback = null;
+                cb(JSON.parse(response));
+            }
+        };
+        bridge.call('luna://com.webos.media/' + method, JSON.stringify(parameters));
+        return bridge;
+    }
+
+    // webOS mutes audio when video.playbackRate is not 1. Ask the media pipeline for the rate
+    // instead (luna setPlayRate with audioOutput), which keeps audio. Subscribe to the pipeline
+    // before setting its rate; the subscription bridge is kept on the element so it stays open.
+    // Never call 'unload' here, it stops playback.
+    if (typeof PalmServiceBridge === 'function') {
+        var nativePlaybackRate = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'playbackRate');
+
+        var withLunaSubscription = function (element, mediaId, onSubscribed) {
+            if (element._lunaSubscribedMediaId === mediaId) {
+                onSubscribed();
+                return;
+            }
+            element._lunaSubscription = lunaMedia('subscribe', { mediaId: mediaId, subscribe: true }, function () {
+                element._lunaSubscribedMediaId = mediaId;
+                onSubscribed();
+            });
+        };
+
+        var requestLunaPlaybackRate = function (element, mediaId, value) {
+            element._lunaPlaybackRate = { mediaId: mediaId, value: value };
+            withLunaSubscription(element, mediaId, function () {
+                lunaMedia('setPlayRate', {
+                    mediaId: mediaId,
+                    playRate: value,
+                    audioOutput: true
+                }, function (response) {
+                    if (response.returnValue === false) {
+                        element._lunaPlaybackRate = undefined;
+                        nativePlaybackRate.set.call(element, value);
+                    }
+                });
+            });
+        };
+
+        Object.defineProperty(HTMLMediaElement.prototype, 'playbackRate', {
+            configurable: true,
+            get: function () {
+                var rate = this._lunaPlaybackRate;
+                if (rate && rate.mediaId === this.mediaId) {
+                    return rate.value;
+                }
+                return nativePlaybackRate.get.call(this);
+            },
+            set: function (value) {
+                var mediaId = this.mediaId;
+                if (!mediaId) {
+                    nativePlaybackRate.set.call(this, value);
+                    return;
+                }
+                requestLunaPlaybackRate(this, mediaId, value);
+            }
+        });
+    }
 })(window.AppInfo, window.DeviceInfo);
