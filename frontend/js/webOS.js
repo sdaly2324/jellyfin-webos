@@ -198,6 +198,7 @@
                 return nativePlaybackRate.get.call(this);
             },
             set: function (value) {
+                value = Number(value);
                 var mediaId = this.mediaId;
                 if (!mediaId) {
                     nativePlaybackRate.set.call(this, value);
